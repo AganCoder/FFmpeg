@@ -8,6 +8,8 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/imgutils.h>
+#include <libswscale/swscale.h>
+#include <SDL.h>
 #include <inttypes.h>
 #include <stdio.h>
 }
@@ -49,6 +51,12 @@ static int decodePacket(AVCodecContext *avctx, AVFrame *frame, AVPacket *packet,
 
 int main(int argc, char const *argv[])
 {
+    if(  SDL_Init(SDL_INIT_EVERYTHING) != 0 )
+    {
+        SDL_Log("SDL_Init fail: %s \n", SDL_GetError());
+        exit(1);
+    }
+
     AVFormatContext *avformatCtx = avformat_alloc_context();
     char filePath[] = "/Users/noah-normal/Documents/Videos/Titanic.ts";
      
@@ -129,7 +137,7 @@ int main(int argc, char const *argv[])
     {
         cerr << " Could not open codec ";
         exit(1);
-    }    
+    }
     FILE *fp_264 = fopen("/Users/noah-normal/Desktop/test264.h264", "wb+");
     FILE *fp_yuv = fopen("/Users/noah-normal/Desktop/test264.yuv", "wb+");
     if( fp_264 == NULL || fp_yuv == NULL )
@@ -165,13 +173,81 @@ int main(int argc, char const *argv[])
     }
     
     decodePacket(videoCodecCtx, avFrame, packet, fp_yuv);
-
+    
 end:
     av_packet_free(&packet);
     fclose(fp_yuv);
     fclose(fp_264);
     avcodec_free_context(&videoCodecCtx);
     avformat_free_context(avformatCtx);
+
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+    SDL_Surface *surface;
+    SDL_Surface *imageSurface;
+    SDL_Texture *texture;
+    FILE *file;
+    unsigned char *yuv_data;
+    
+    SDL_Init(SDL_INIT_EVERYTHING);
+    
+    int width = 640;
+    int height = 272;
+    int yuvSize = width * height * 3 / 2;
+    file = fopen("/Users/noah-normal/Desktop/test264.yuv", "rb");
+    
+    if( file == NULL )
+    {
+        SDL_Log("Error opening");
+        return EXIT_FAILURE;
+    }
+    yuv_data = static_cast<unsigned char*>(malloc(yuvSize * sizeof(unsigned char)));
+
+    window = SDL_CreateWindow("Hello SDL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_ALLOW_HIGHDPI);
+
+    if( window == NULL )
+    {
+        cout << "Counld not create window" << SDL_GetError() << endl;
+        return EXIT_FAILURE;
+    }
+    
+    renderer = SDL_CreateRenderer(window, -1, 0);
+    SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
+    
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STATIC, width, height);
+ 
+    if( texture != NULL )
+    {
+        SDL_Event windowEvent;
+        for(;;)
+        {
+            if( SDL_PollEvent(&windowEvent) )
+            {
+                if( SDL_QUIT == windowEvent.type )
+                {
+                    break;
+                }
+            }
+
+            fread(yuv_data, 1, yuvSize, file);
+            
+            SDL_UpdateTexture(texture, NULL, yuv_data, width);
+            SDL_RenderClear(renderer);
+            SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+            SDL_RenderPresent(renderer);
+            
+            SDL_Delay(40);
+        }
+    }
+    
+    fclose(file);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+
+    SDL_Quit();
+
     
     return 0;
 }
