@@ -12,6 +12,33 @@ extern "C" {
 #include <stdio.h>
 }
 
+// YUV 4:2:0采样，每四个Y共用一组UV分量
+// 视频宽高以及帧率
+int simplest_yuv420_split(const char *url, int w, int h, int frame)
+{
+    FILE *fp = fopen(url, "rb+");
+    FILE *fp1 = fopen("/Users/noah-normal/Desktop/output_420_y.yuv", "wb+");
+    FILE *fp2 = fopen("/Users/noah-normal/Desktop/output_420_u.yuv", "wb+");
+    FILE *fp3 = fopen("/Users/noah-normal/Desktop/output_420_v.yuv", "wb+");
+
+    unsigned char *pic = (unsigned char *)malloc( w * h * 3 / 2  );
+    for (int i = 0; i < frame; ++i) 
+    {
+        fread(pic, 1, w * h * 3 / 2, fp );
+        fwrite(pic, 1, w * h , fp1);
+        fwrite(pic + w * h, 1, w * h / 4 , fp2);
+        fwrite(pic + w * h * 5 / 4, 1, w * h /4 , fp3);
+    }
+
+    free(pic);
+    fclose(fp);
+    fclose(fp1);
+    fclose(fp2);
+    fclose(fp3);
+
+    return 0;
+}
+
 static int decodePacket(AVCodecContext *avctx, AVFrame *frame, AVPacket *packet, FILE *fp)
 {
     int ret = 0;
@@ -49,129 +76,9 @@ static int decodePacket(AVCodecContext *avctx, AVFrame *frame, AVPacket *packet,
 
 int main(int argc, char const *argv[])
 {
-    AVFormatContext *avformatCtx = avformat_alloc_context();
-    char filePath[] = "/Users/noah-normal/Documents/Videos/Titanic.ts";
-     
-    if( avformat_open_input(&avformatCtx, filePath, NULL, NULL) != 0 )
-    {
-        cerr << "Could not open video file";
-        exit(1);
-    }
-    
-    /* retrieve stream information */
-    if( avformat_find_stream_info(avformatCtx, NULL) < 0 )
-    {
-        cerr << "Could not find stream infomation \n";
-        exit(1);
-    }
-    
-//    cout << "时长: " << avformatCtx->duration << "" << endl;
-//    cout << "封装格式名称:" << avformatCtx->iformat->name << endl;
-//    cout << "封装格式长名称: = " << avformatCtx->iformat->long_name << endl;
-//    // cout << "封装格式的扩展名: = " << avformatCtx->iformat->extensions << endl; // 某些上面没有,会 crash
-//    cout << "封装格式 id = " << avformatCtx->iformat->raw_codec_id << endl;
-//    cout << "输入视频的 AVStream 个数 = " << avformatCtx->nb_streams  << endl;
-//    cout << "输入视频的码率 = " << avformatCtx->bit_rate << endl;
-//    cout << "---- AVFormatContext Finish ----\n " << endl;
-    
-    // 查找视频流的 index
-//    int videoStreamIndex = -1;
-//    for( int index = 0; index < avformatCtx->nb_streams; ++index )
-//    {
-//        AVStream *stream = avformatCtx->streams[index];
-//        AVCodecParameters *codecpar = stream->codecpar;
-//
-//        if( codecpar->codec_type == AVMEDIA_TYPE_VIDEO )
-//        {
-//            videoStreamIndex = index;
-//            break;
-//        }
-//    }
-    int videoStreamIndex = av_find_best_stream(avformatCtx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-    if( videoStreamIndex == -1 )
-    {
-        cerr << "NO Video Stream " << endl;
-        exit(1);
-    }
-    
-    AVStream *videoStream = avformatCtx->streams[videoStreamIndex];
-    AVCodecParameters *videoCodecPar = videoStream->codecpar;
-//    cout << "AVStream 序号: " << videoStream->id << endl;
-//    cout << "当前 AVStream 流的帧率 num = " << videoStream->r_frame_rate.num << " den = " << videoStream->r_frame_rate.den << endl;
-//    cout << "宽 * 高: " << videoCodecPar->width << " * " << videoCodecPar->height << endl;
-//    cout << "解码器名称: " << avcodec_get_name(videoCodecPar->codec_id) << endl;
-//    cout << "------- AVStream Finish ------- \n " << endl;
+    char filePath[] = "/Users/noah-normal/Documents/Videos/sintel_640_360.yuv";
 
-    const AVCodec *videoCodec = avcodec_find_decoder(videoCodecPar->codec_id);
-    if( videoCodec == NULL )
-    {
-        cerr << "Not find decoder";
-        exit(1);
-    }
-    cout << "解码器名称: " << videoCodec->name << endl;
-    cout << "解码器长名称: " << videoCodec->long_name << endl;
-    cout << "------- AVCodec Finish ------- \n " << endl;
-        
-    AVCodecContext *videoCodecCtx = avcodec_alloc_context3(videoCodec);
-    if( videoCodecCtx == NULL )
-    {
-        cerr << "alloc avcodec context failed" << endl;
-        exit(1);
-    }
-    
-    if( avcodec_parameters_to_context(videoCodecCtx, videoCodecPar) < 0 )
-    {
-        cerr << "parameters to context failed" << av_get_media_type_string(AVMEDIA_TYPE_VIDEO) << endl;
-        exit(1);
-    }
-
-    if( avcodec_open2(videoCodecCtx, videoCodec, NULL) < 0 )
-    {
-        cerr << " Could not open codec ";
-        exit(1);
-    }    
-    FILE *fp_264 = fopen("/Users/noah-normal/Desktop/test264.h264", "wb+");
-    FILE *fp_yuv = fopen("/Users/noah-normal/Desktop/test264.yuv", "wb+");
-    if( fp_264 == NULL || fp_yuv == NULL )
-    {
-        cerr << "Could not open h264 && YUV file" << endl;
-        exit(1);
-    }
-    
-    AVFrame *avFrame = av_frame_alloc();
-    if( avFrame == NULL )
-    {
-        cerr << "Could not alloc frame";
-        exit(1);
-    }
-    
-    AVPacket *packet = av_packet_alloc();
-    if( packet == NULL )
-    {
-        cerr << "Could not alloc packet";
-        exit(1);
-    }    
-    while( av_read_frame(avformatCtx, packet) >= 0 )
-    {
-        if( packet->stream_index == videoStreamIndex )
-        {
-            // 写入 h264 裸数据
-            fwrite(packet->data, 1, packet->size, fp_264);
-            int ret = decodePacket(videoCodecCtx, avFrame, packet, fp_yuv);
-            av_packet_unref(packet);
-            if( ret < 0 )
-                break;
-        }
-    }
-    
-    decodePacket(videoCodecCtx, avFrame, packet, fp_yuv);
-
-end:
-    av_packet_free(&packet);
-    fclose(fp_yuv);
-    fclose(fp_264);
-    avcodec_free_context(&videoCodecCtx);
-    avformat_free_context(avformatCtx);
+    simplest_yuv420_split(filePath, 640, 360, 99);
     
     return 0;
 }
