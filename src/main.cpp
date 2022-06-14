@@ -14,6 +14,38 @@ extern "C" {
 #include <stdio.h>
 }
 
+#define SFM_REFRESH_EVENT  (SDL_USEREVENT + 1)
+#define SFM_BREAK_EVENT  (SDL_USEREVENT + 2)
+int thread_exit=0;
+
+SDL_Window *window;
+SDL_Renderer *renderer;
+SDL_Surface *surface;
+SDL_Surface *imageSurface;
+SDL_Texture *texture;
+SDL_Event event;
+FILE *file;
+unsigned char *yuv_data;
+
+
+
+int sfp_refresh_thread(void *opaque){
+    thread_exit=0;
+    while (!thread_exit) {
+        SDL_Event event;
+        event.type = SFM_REFRESH_EVENT;
+        SDL_PushEvent(&event);
+        SDL_Delay(40);
+    }
+    thread_exit=0;
+    //Break
+    SDL_Event event;
+    event.type = SFM_BREAK_EVENT;
+    SDL_PushEvent(&event);
+
+    return 0;
+}
+
 static int decodePacket(AVCodecContext *avctx, AVFrame *frame, AVPacket *packet, FILE *fp)
 {
     int ret = 0;
@@ -38,10 +70,18 @@ static int decodePacket(AVCodecContext *avctx, AVFrame *frame, AVPacket *packet,
             
             return ret;
         }
-                        
-        fwrite(frame->data[0], 1, frame->width * frame->height, fp);
-        fwrite(frame->data[1], 1, frame->width * frame->height / 4, fp);
-        fwrite(frame->data[2], 1, frame->width * frame->height / 4, fp);
+                   
+        //SDL---------------------------
+        SDL_UpdateYUVTexture(texture, NULL, frame->data[0], frame->linesize[0],frame->data[1], frame->linesize[1],frame->data[2], frame->linesize[2]);
+        SDL_RenderClear( renderer );
+        //SDL_RenderCopy( sdlRenderer, sdlTexture, &sdlRect, &sdlRect );
+        SDL_RenderCopy( renderer, texture, NULL, NULL);
+        SDL_RenderPresent( renderer );
+        //SDL End-----------------------
+        
+//        fwrite(frame->data[0], 1, frame->width * frame->height, fp);
+//        fwrite(frame->data[1], 1, frame->width * frame->height / 4, fp);
+//        fwrite(frame->data[2], 1, frame->width * frame->height / 4, fp);
             
         av_frame_unref(frame);
     }
@@ -158,52 +198,9 @@ int main(int argc, char const *argv[])
     {
         cerr << "Could not alloc packet";
         exit(1);
-    }    
-    while( av_read_frame(avformatCtx, packet) >= 0 )
-    {
-        if( packet->stream_index == videoStreamIndex )
-        {
-            // 写入 h264 裸数据
-            fwrite(packet->data, 1, packet->size, fp_264);
-            int ret = decodePacket(videoCodecCtx, avFrame, packet, fp_yuv);
-            av_packet_unref(packet);
-            if( ret < 0 )
-                break;
-        }
     }
     
-    decodePacket(videoCodecCtx, avFrame, packet, fp_yuv);
-    
-end:
-    av_packet_free(&packet);
-    fclose(fp_yuv);
-    fclose(fp_264);
-    avcodec_free_context(&videoCodecCtx);
-    avformat_free_context(avformatCtx);
-
-    SDL_Window *window;
-    SDL_Renderer *renderer;
-    SDL_Surface *surface;
-    SDL_Surface *imageSurface;
-    SDL_Texture *texture;
-    FILE *file;
-    unsigned char *yuv_data;
-    
-    SDL_Init(SDL_INIT_EVERYTHING);
-    
-    int width = 640;
-    int height = 272;
-    int yuvSize = width * height * 3 / 2;
-    file = fopen("/Users/noah-normal/Desktop/test264.yuv", "rb");
-    
-    if( file == NULL )
-    {
-        SDL_Log("Error opening");
-        return EXIT_FAILURE;
-    }
-    yuv_data = static_cast<unsigned char*>(malloc(yuvSize * sizeof(unsigned char)));
-
-    window = SDL_CreateWindow("Hello SDL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_ALLOW_HIGHDPI);
+    window = SDL_CreateWindow("Hello SDL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, videoCodecPar->width, videoCodecPar->height, SDL_WINDOW_ALLOW_HIGHDPI);
 
     if( window == NULL )
     {
@@ -216,31 +213,74 @@ end:
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
     
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STATIC, width, height);
- 
-    if( texture != NULL )
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STATIC, videoCodecPar->width, videoCodecPar->height);
+    
+    
+    SDL_Thread *video = SDL_CreateThread(sfp_refresh_thread, NULL, NULL);
+    
+    for(;;)
     {
-        SDL_Event windowEvent;
-        for(;;)
+        SDL_WaitEvent(&event);
+        if( event.type == SFM_REFRESH_EVENT )
         {
-            if( SDL_PollEvent(&windowEvent) )
+            if( av_read_frame(avformatCtx, packet) >= 0 )
             {
-                if( SDL_QUIT == windowEvent.type )
+                if( packet->stream_index == videoStreamIndex )
                 {
-                    break;
+                    // 写入 h264 裸数据
+                    fwrite(packet->data, 1, packet->size, fp_264);
+                    int ret = decodePacket(videoCodecCtx, avFrame, packet, fp_yuv);
+                    av_packet_unref(packet);
+                    if( ret < 0 )
+                        break;
                 }
             }
-
-            fread(yuv_data, 1, yuvSize, file);
-            
-            SDL_UpdateTexture(texture, NULL, yuv_data, width);
-            SDL_RenderClear(renderer);
-            SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-            SDL_RenderPresent(renderer);
-            
-            SDL_Delay(40);
+        }
+        else if(event.type==SDL_QUIT){
+            thread_exit=1;
+        }else if(event.type==SFM_BREAK_EVENT){
+            break;
         }
     }
+    
+    decodePacket(videoCodecCtx, avFrame, packet, fp_yuv);
+    
+end:
+    av_packet_free(&packet);
+    fclose(fp_yuv);
+    fclose(fp_264);
+    avcodec_free_context(&videoCodecCtx);
+    avformat_free_context(avformatCtx);
+
+
+
+    
+
+
+ 
+//    if( texture != NULL )
+//    {
+//        SDL_Event windowEvent;
+//        for(;;)
+//        {
+//            if( SDL_PollEvent(&windowEvent) )
+//            {
+//                if( SDL_QUIT == windowEvent.type )
+//                {
+//                    break;
+//                }
+//            }
+//
+//            fread(yuv_data, 1, yuvSize, file);
+//
+//            SDL_UpdateTexture(texture, NULL, yuv_data, width);
+//            SDL_RenderClear(renderer);
+//            SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+//            SDL_RenderPresent(renderer);
+//
+//            SDL_Delay(40);
+//        }
+//    }
     
     fclose(file);
     SDL_DestroyRenderer(renderer);
